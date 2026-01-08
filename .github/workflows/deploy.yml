@@ -1,0 +1,90 @@
+name: Deploy to Aliyun Liteserver
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: aliyun-mik-verse
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      APP_DIR: ${{ secrets.APP_DIR }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint & build
+        run: |
+          pnpm lint
+          pnpm build
+
+      - name: Archive build output
+        run: |
+          tar -czf release.tar.gz \
+            .next \
+            public \
+            package.json \
+            pnpm-lock.yaml \
+            next.config.ts \
+            tsconfig.json \
+            postcss.config.mjs \
+            eslint.config.mjs
+
+      - name: Upload artifact to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: release.tar.gz
+          target: ${{ secrets.APP_DIR }}
+
+      - name: Deploy & restart PM2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          envs: APP_DIR
+          script: |
+            set -euo pipefail
+            APP_DIR="${APP_DIR:-/var/www/mik-verse}"
+            mkdir -p "$APP_DIR"
+            cd "$APP_DIR"
+            TMP_DIR="$APP_DIR/.tmp_release"
+            rm -rf "$TMP_DIR"
+            mkdir -p "$TMP_DIR"
+            tar -xzf release.tar.gz -C "$TMP_DIR"
+            rsync -a --delete "$TMP_DIR"/ "$APP_DIR/current"
+            rm -rf "$TMP_DIR"
+            rm -f release.tar.gz
+            cd "$APP_DIR/current"
+            pnpm install --prod --frozen-lockfile
+            if pm2 list | grep -q "mik-verse"; then
+              pm2 reload mik-verse
+            else
+              pm2 start pnpm --name mik-verse -- start
+            fi
+            pm2 save
