@@ -70,6 +70,11 @@ jobs:
           envs: APP_DIR
           script: |
             set -euo pipefail
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            export PNPM_HOME="$HOME/.local/share/pnpm"
+            export PATH="$PNPM_HOME:$PATH"
+            command -v pnpm >/dev/null || { echo "pnpm not found in PATH" >&2; exit 1; }
             APP_DIR="${APP_DIR:-/var/www/mik-verse}"
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
